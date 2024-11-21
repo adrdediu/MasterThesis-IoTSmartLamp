@@ -1,0 +1,8 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// Example configuration - Replace with your values
+#define ALLOWED_IP IPAddress(192,168,0,100)
+#define AUTH_TOKEN "your_auth_token_here"
+
+#endif

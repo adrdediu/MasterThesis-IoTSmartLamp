@@ -1,0 +1,7 @@
+ESP8266WiFi - https://github.com/esp8266/Arduino/tree/master/libraries/ESP8266WiFi
+ESP8266WebServer - https://github.com/esp8266/Arduino/tree/master/libraries/ESP8266WebServer
+WiFiManager - https://github.com/tzapu/WiFiManager
+Wire - https://github.com/esp8266/Arduino/tree/master/libraries/Wire
+Adafruit_Sensor - https://github.com/adafruit/Adafruit_Sensor
+Adafruit_BMP085_U - https://github.com/adafruit/Adafruit_BMP085_Unified
+EEPROM - https://github.com/esp8266/Arduino/tree/master/libraries/EEPROM
