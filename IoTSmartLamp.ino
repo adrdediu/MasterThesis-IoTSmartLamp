@@ -9,9 +9,9 @@
 #include "config.h" // IP address, Auth Token, etc.
 
 // Shift Register Pins
-const int dataPin = D5;  // Serial data input
+const int dataPin = D7;  // Serial data input
 const int latchPin = D6; // Register clock
-const int clockPin = D7; // Shift register clock
+const int clockPin = D5; // Shift register clock
 
 // LED Pattern Variables
 unsigned long lastLedUpdate = 0;
@@ -28,15 +28,15 @@ enum PatternType {
 };
 
 // Define the LED groups
-const uint32_t G0_MASK = 0x000000;
-const uint32_t G1_MASK = 0x030000;
-const uint32_t G2_MASK = 0x3C0000;
-const uint32_t G3_MASK = 0xC00300;
-const uint32_t G4_MASK = 0x003C00;
-const uint32_t G5_MASK = 0x00C003;
-const uint32_t G6_MASK = 0x00003C;
-const uint32_t G7_MASK = 0x0000C0;
-const uint32_t G8_MASK = 0xFFFFFF;
+const uint32_t G0_MASK = 0x0000;
+const uint32_t G1_MASK = 0xC000;
+const uint32_t G2_MASK = 0x2000;
+const uint32_t G3_MASK = 0x1000;
+const uint32_t G4_MASK = 0x0C30;
+const uint32_t G5_MASK = 0x0008;
+const uint32_t G6_MASK = 0x0004;
+const uint32_t G7_MASK = 0x0003;
+const uint32_t G8_MASK = 0xFFFF;
 
 int NUM_STATES = 4;
 int currentState = 0;
@@ -106,8 +106,8 @@ String getPatternName(PatternType pattern) {
 
 void updatePatternState() {
   switch (activePattern) {
-    case G0: ledState = 0x000000; break;
-    case G8: ledState = 0xFFFFFF; break;
+    case G0: ledState = 0x0000; break;
+    case G8: ledState = 0xFFFF; break;
     case G1:
     case G2:
     case G3:
@@ -128,40 +128,40 @@ void updatePatternState() {
       break;
     case OUT_TO_IN:
       switch (currentState) {
-        case 0: ledState = 0x0300C0; break;
-        case 1: ledState = 0x3C003C; break;
-        case 2: ledState = 0xC0C303; break;
-        case 3: ledState = 0x003C00; break;
+        case 0: ledState = 0xC003; break;
+        case 1: ledState = 0x2004; break;
+        case 2: ledState = 0x1008; break;
+        case 3: ledState = 0x0C30; break;
       }
       break;
     case IN_TO_OUT:
       switch (currentState) {
-        case 0: ledState = 0x003C00; break;
-        case 1: ledState = 0xC0C303; break;
-        case 2: ledState = 0x3C003C; break;
-        case 3: ledState = 0x0300C0; break;
+        case 0: ledState = 0x0C30; break;
+        case 1: ledState = 0x1008; break;
+        case 2: ledState = 0x2004; break;
+        case 3: ledState = 0xC003; break;
       }
       break;
     case LEFT_TO_RIGHT:
       switch (currentState) {
-        case 0: ledState = 0x030000; break;
-        case 1: ledState = 0x3C0000; break;
-        case 2: ledState = 0xC00300; break;
-        case 3: ledState = 0x003C00; break;
-        case 4: ledState = 0x00C003; break;
-        case 5: ledState = 0x00003C; break;
-        case 6: ledState = 0x0000C0; break;
+        case 0: ledState = 0xC000; break;
+        case 1: ledState = 0x2000; break;
+        case 2: ledState = 0x1000; break;
+        case 3: ledState = 0x0C30; break;
+        case 4: ledState = 0x0008; break;
+        case 5: ledState = 0x0004; break;
+        case 6: ledState = 0x0003; break;
       }
       break;
     case RIGHT_TO_LEFT:
       switch (currentState) {
-        case 6: ledState = 0x030000; break;
-        case 5: ledState = 0x3C0000; break;
-        case 4: ledState = 0xC0C000; break;
-        case 3: ledState = 0x003C00; break;
-        case 2: ledState = 0x000303; break;
-        case 1: ledState = 0x00003C; break;
-        case 0: ledState = 0x0000C0; break;
+        case 6: ledState = 0xC000; break;
+        case 5: ledState = 0x2000; break;
+        case 4: ledState = 0x1000; break;
+        case 3: ledState = 0x0C30; break;
+        case 2: ledState = 0x0008; break;
+        case 1: ledState = 0x0004; break;
+        case 0: ledState = 0x0003; break;
       }
       break;
     default:
@@ -309,9 +309,9 @@ void resetWifiSettings() {
 
 bool isAuthenticated() {
   // Check if request comes from allowed IP
-  if (server.client().remoteIP() != ALLOWED_IP ) {
-    return false;
-  }
+  //if (server.client().remoteIP() != ALLOWED_IP ) {
+  //  return false;
+  //}
   
   if (server.hasHeader("Authorization")) {
     String token = server.header("Authorization");
@@ -448,13 +448,13 @@ void startConfigPortal() {
 }
 
 void setup() {
-  //Serial.begin(115200);
+  Serial.begin(115200);
  
   setupShiftRegisters();
   loadSettings(); // Load the saved settings
 
   if (!bmp.begin()) {
-    //Serial.println("Could not find a valid BMP180 sensor, check wiring!");
+    Serial.println("Could not find a valid BMP180 sensor, check wiring!");
   }
 
   // Attempt to connect to saved WiFi
@@ -465,9 +465,9 @@ void setup() {
 
   // At this point, we should be connected to WiFi
   if (WiFi.status() == WL_CONNECTED) {
-    //Serial.println("WiFi connected");
-    //Serial.println("IP address: ");
-    //Serial.println(WiFi.localIP());
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
 
     server.on("/", handleRoot);
     server.on("/api/status", handleStatus);
@@ -476,9 +476,9 @@ void setup() {
     server.on("/api/save_state", handleSaveState);
 
     server.begin();
-    //Serial.println("HTTP server started");
+    Serial.println("HTTP server started");
   } else {
-    //Serial.println("Failed to connect and configure WiFi. Restarting...");
+    Serial.println("Failed to connect and configure WiFi. Restarting...");
     ESP.restart();
   }
 }
