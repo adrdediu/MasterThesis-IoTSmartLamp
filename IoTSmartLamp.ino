@@ -8,6 +8,25 @@
 
 #include "config.h" // IP address, Auth Token, etc.
 
+// --------------------------- Variables <-> Master System  --------------------------- //
+
+// EEPROM settings
+#define EEPROM_SIZE 16
+#define EEPROM_ADDR_START 100
+#define EEPROM_ADDR_VALID (EEPROM_ADDR_START + 0)
+#define EEPROM_ADDR_LED_STATE (EEPROM_ADDR_START + 1)
+#define EEPROM_ADDR_PATTERN (EEPROM_ADDR_START + 5)
+#define EEPROM_ADDR_INTERVAL (EEPROM_ADDR_START + 9)
+
+struct Settings {
+  uint32_t ledState;
+  int patternType;
+  unsigned long patternInterval;
+};
+
+
+// --------------------------- Variables <-> Lighting System --------------------------- //
+
 // Shift Register Pins
 const int dataPin = D7;  // Serial data input
 const int latchPin = D6; // Register clock
@@ -16,7 +35,7 @@ const int clockPin = D5; // Shift register clock
 // LED Pattern Variables
 unsigned long lastLedUpdate = 0;
 const long ledUpdateInterval = 50; // Update LEDs every 50ms
-uint32_t ledState = 0; // 32-bit integer to hold 24 LED states
+uint32_t ledState = 0;
 
 enum PatternType {
   NONE,
@@ -42,34 +61,82 @@ int NUM_STATES = 4;
 int currentState = 0;
 PatternType activePattern = NONE;
 unsigned long lastPatternUpdate = 0;
-unsigned long patternUpdateInterval = 1000; // Update pattern every 1000ms
+unsigned long patternUpdateInterval = 1000; 
 
-// EEPROM settings
-#define EEPROM_SIZE 16
-#define EEPROM_ADDR_START 100
-#define EEPROM_ADDR_VALID (EEPROM_ADDR_START + 0)
-#define EEPROM_ADDR_LED_STATE (EEPROM_ADDR_START + 1)
-#define EEPROM_ADDR_PATTERN (EEPROM_ADDR_START + 5)
-#define EEPROM_ADDR_INTERVAL (EEPROM_ADDR_START + 9)
 
-struct Settings {
-  uint32_t ledState;
-  int patternType;
-  unsigned long patternInterval;
-};
+// --------------------------- Variables <-> Ambiental System --------------------------- //
 
-// Sensors and Relays
 Adafruit_BMP085_Unified bmp = Adafruit_BMP085_Unified(10085);
+
+// --------------------------- Variables <-> Web Server System --------------------------- //
 
 // Wifi Server - Constants and Objects
 ESP8266WebServer server(80);
 WiFiManager wifiManager;
 unsigned long totalRequests = 0;
-bool needsWiFiReset = false;
 unsigned long lastCheckTime = 0;
 unsigned long wifiConnectStartTime = 0;
-const unsigned long CHECK_INTERVAL = 100 * 60 * 1000; // 5 minutes in milliseconds
-const unsigned long WIFI_CONNECT_TIMEOUT = 3600000; // 60 mins timeout for initial connection
+const unsigned long WIFI_CONNECT_TIMEOUT = 600000; 
+
+
+// ---------------------------- Functions <-> Master System  --------------------------- //
+
+void saveSettings() {
+  Settings settings;
+  settings.ledState = ledState;
+  settings.patternType = static_cast<int>(activePattern);
+  settings.patternInterval = patternUpdateInterval;
+
+  EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
+  EEPROM.write(EEPROM_ADDR_VALID, 0xAA);
+  EEPROM.put(EEPROM_ADDR_LED_STATE, settings);
+  EEPROM.commit();
+  EEPROM.end();
+}
+
+void loadSettings() {
+  EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
+  
+  if (EEPROM.read(EEPROM_ADDR_VALID) != 0xAA) {
+    ledState = 0;
+    activePattern = NONE;
+    patternUpdateInterval = 1000;
+    EEPROM.end();
+    return;
+  }
+
+  Settings settings;
+  EEPROM.get(EEPROM_ADDR_LED_STATE, settings);
+  EEPROM.end();
+
+  ledState = settings.ledState;
+  activePattern = static_cast<PatternType>(settings.patternType);
+  patternUpdateInterval = settings.patternInterval;
+
+  switch (activePattern) {
+    case OUT_TO_IN:
+    case IN_TO_OUT:
+      NUM_STATES = 4;
+      break;
+    case LEFT_TO_RIGHT:
+    case RIGHT_TO_LEFT:
+      NUM_STATES = 7;
+      break;
+    default:
+      NUM_STATES = 1;
+      break;
+  }
+
+  updateLEDs();
+}
+
+// ---------------------------- Functions <-> Lighting System  --------------------------- //
+
+void setupShiftRegisters() {
+  pinMode(dataPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+}
 
 void setPattern(PatternType pattern) {
   activePattern = pattern;
@@ -83,7 +150,6 @@ String getPatternName(PatternType pattern) {
     case LEFT_TO_RIGHT: return "Left to Right";
     case RIGHT_TO_LEFT: return "Right to Left";
     default:
-      // Extract active G's from ledState
       String activeGs = "";
       if (ledState == G0_MASK) return "All Off";
       if (ledState == G8_MASK) return "All On";
@@ -104,7 +170,7 @@ String getPatternName(PatternType pattern) {
   }
 }
 
-void updatePatternState() {
+void  updatePatternState() {
   switch (activePattern) {
     case G0: ledState = 0x0000; break;
     case G8: ledState = 0xFFFF; break;
@@ -115,7 +181,6 @@ void updatePatternState() {
     case G5:
     case G6:
     case G7:
-      // Apply the mask for the current pattern
       switch (activePattern) {
         case G1: ledState |= G1_MASK; break;
         case G2: ledState |= G2_MASK; break;
@@ -170,55 +235,68 @@ void updatePatternState() {
   updateLEDs();
 }
 
-void saveSettings() {
-  Settings settings;
-  settings.ledState = ledState;
-  settings.patternType = static_cast<int>(activePattern);
-  settings.patternInterval = patternUpdateInterval;
-
-  EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
-  EEPROM.write(EEPROM_ADDR_VALID, 0xAA); // Validity check
-  EEPROM.put(EEPROM_ADDR_LED_STATE, settings);
-  EEPROM.commit();
-  EEPROM.end();
+void updateLEDs() {
+  digitalWrite(latchPin, LOW);
+  for (int i = 23; i >= 0; i--) {
+    digitalWrite(clockPin, LOW);
+    digitalWrite(dataPin, bitRead(ledState, i));
+    digitalWrite(clockPin, HIGH);
+  }
+  digitalWrite(latchPin, HIGH);
 }
 
-void loadSettings() {
-  EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
+// ---------------------------- Functions <-> Web Server System  --------------------------- //
+
+bool isAuthenticated() {
+  // Check if request comes from allowed IP
+  if (server.client().remoteIP() != ALLOWED_IP ) {
+   return false;
+  }
   
-  if (EEPROM.read(EEPROM_ADDR_VALID) != 0xAA) {
-    // No valid settings, use defaults
-    ledState = 0;
-    activePattern = NONE;
-    patternUpdateInterval = 1000;
-    EEPROM.end();
-    return;
+  if (server.hasHeader("Authorization")) {
+    String token = server.header("Authorization");
+    if (token == AUTH_TOKEN) {
+      lastCheckTime = millis();
+      return true;
+    }
   }
-
-  Settings settings;
-  EEPROM.get(EEPROM_ADDR_LED_STATE, settings);
-  EEPROM.end();
-
-  ledState = settings.ledState;
-  activePattern = static_cast<PatternType>(settings.patternType);
-  patternUpdateInterval = settings.patternInterval;
-
-  // Set NUM_STATES based on the loaded pattern
-  switch (activePattern) {
-    case OUT_TO_IN:
-    case IN_TO_OUT:
-      NUM_STATES = 4;
-      break;
-    case LEFT_TO_RIGHT:
-    case RIGHT_TO_LEFT:
-      NUM_STATES = 7;
-      break;
-    default:
-      NUM_STATES = 1;
-      break;
+  if (server.hasArg("token")) {
+    String token = server.arg("token");
+    if (token == AUTH_TOKEN) {
+      return true;
+    }
   }
+  return false;
+}
 
-  updateLEDs();
+void resetWifiSettings() {
+  server.stop();  // Stop the main server
+ 
+  // Force the configuration portal to start
+  wifiManager.resetSettings();  // Optional: uncomment to clear saved settings
+  bool portalRunning = wifiManager.startConfigPortal("NodeMCU_Reconfig");
+ 
+  server.begin();
+
+  lastCheckTime = millis();
+}
+
+bool connectToSavedWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();
+ 
+  unsigned long startAttemptTime = millis();
+
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_CONNECT_TIMEOUT) {
+    delay(100);
+    Serial.print(".");
+  }
+ 
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 void handleRoot() {
@@ -248,13 +326,11 @@ void handleStatus() {
     response += ", \"sensor_status\":\"NOK Please check wiring !\"";
   }
 
-  // Add LED information
   response += ", \"led_pattern\":\"" + String(getPatternName(activePattern)) + "\"";
   response += ", \"led_pattern_interval\":" + String(patternUpdateInterval);
   response += ", \"led_state\":\"0x" + String(ledState, HEX) + "\"";
   response += ", \"current_state\":" + String(currentState);
  
-  // Web server information
   response += ", \"ip_address\":\"" + WiFi.localIP().toString() + "\"";
   response += ", \"total_requests\":" + String(totalRequests);
   response += ", \"free_heap\":" + String(ESP.getFreeHeap());
@@ -279,74 +355,6 @@ void handleReconfigure() {
   resetWifiSettings();
 }
 
-void resetWifiSettings() {
-  server.stop();  // Stop the main server
- 
-  // Force the configuration portal to start
-  wifiManager.resetSettings();  // Optional: uncomment to clear saved settings
-  bool portalRunning = wifiManager.startConfigPortal("NodeMCU_Reconfig");
- 
-  // if (portalRunning) {
-  //   Serial.println("Config portal ran successfully");
-  // } else {
-  //   Serial.println("Config portal failed to start or was closed without configuration");
-  // }
-
-  // Attempt to reconnect to WiFi
-  if (WiFi.status() != WL_CONNECTED) {
-    //Serial.println("Attempting to reconnect to WiFi...");
-    wifiManager.autoConnect("NodeMCU_AP");
-  }
-
-  // Restart the main server
-  server.begin();
-  //Serial.println("Main server restarted");
-
-  // Reset the check variables
-  needsWiFiReset = false;
-  lastCheckTime = millis();
-}
-
-bool isAuthenticated() {
-  // Check if request comes from allowed IP
-  //if (server.client().remoteIP() != ALLOWED_IP ) {
-  //  return false;
-  //}
-  
-  if (server.hasHeader("Authorization")) {
-    String token = server.header("Authorization");
-    if (token == AUTH_TOKEN) {
-      needsWiFiReset = false;
-      lastCheckTime = millis();
-      return true;
-    }
-  }
-  if (server.hasArg("token")) {
-    String token = server.arg("token");
-    if (token == AUTH_TOKEN) {
-      return true;
-    }
-  }
-  return false;
-}
-
-
-void setupShiftRegisters() {
-  pinMode(dataPin, OUTPUT);
-  pinMode(latchPin, OUTPUT);
-  pinMode(clockPin, OUTPUT);
-}
-
-void updateLEDs() {
-  digitalWrite(latchPin, LOW);
-  for (int i = 23; i >= 0; i--) {
-    digitalWrite(clockPin, LOW);
-    digitalWrite(dataPin, bitRead(ledState, i));
-    digitalWrite(clockPin, HIGH);
-  }
-  digitalWrite(latchPin, HIGH);
-}
-
 void handleLEDs() {
   if (!isAuthenticated()) {
     server.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
@@ -366,7 +374,6 @@ void handleLEDs() {
       }
     }
 
-    // Reset ledState if switching to a G pattern from a non-G pattern
     if ((patternArg.startsWith("g") && patternArg.length() == 2 &&
          patternArg[1] >= '1' && patternArg[1] <= '7') &&
         (activePattern < G1 || activePattern > G7)) {
@@ -404,66 +411,30 @@ void handleLEDs() {
       saveSettings();
     }
 
-    //Serial.println(getPatternName(activePattern));
     server.send(200, "application/json", "{\"status\":\"ok\",\"pattern\":\"" + getPatternName(activePattern) + "\",\"interval\":" + String(patternUpdateInterval) + "}");
   } else {
     server.send(400, "application/json", "{\"error\":\"Missing LED pattern\"}");
   }
 }
 
-void handleSaveState() {
-  if (!isAuthenticated()) {
-    server.send(401, "application/json", "{\"error\":\"Unauthorized\"}");
-    return;
-  }
-  
-  saveSettings();
-  server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Settings saved\"}");
-}
+// ---------------------------- Arduino Generic Functions  --------------------------- //
 
-bool connectToSavedWiFi() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();
- 
-  unsigned long startAttemptTime = millis();
-
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_CONNECT_TIMEOUT) {
-    delay(100);
-    //Serial.print(".");
-  }
- 
-  if (WiFi.status() == WL_CONNECTED) {
-   // Serial.println("\nConnected to saved WiFi");
-    return true;
-  } else {
-    //Serial.println("\nFailed to connect to saved WiFi");
-    return false;
-  }
-}
-
-void startConfigPortal() {
-  //Serial.println("Starting config portal");
-  WiFiManager wifiManager;
-  wifiManager.startConfigPortal("NodeMCU_Setup");
-}
 
 void setup() {
   Serial.begin(115200);
  
+  loadSettings(); 
+  
   setupShiftRegisters();
-  loadSettings(); // Load the saved settings
 
   if (!bmp.begin()) {
     Serial.println("Could not find a valid BMP180 sensor, check wiring!");
   }
 
-  // Attempt to connect to saved WiFi
   if (!connectToSavedWiFi()) {
-    // If connection fails, start the config portal
-    startConfigPortal();
+    resetWifiSettings();
   }
 
-  // At this point, we should be connected to WiFi
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
@@ -473,7 +444,6 @@ void setup() {
     server.on("/api/status", handleStatus);
     server.on("/api/reconfigure", handleReconfigure);
     server.on("/api/leds", handleLEDs);
-    server.on("/api/save_state", handleSaveState);
 
     server.begin();
     Serial.println("HTTP server started");
@@ -486,14 +456,12 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  // Check WiFi connection status
   if (WiFi.status() != WL_CONNECTED) {
     if (currentMillis - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT) {
       Serial.println("Failed to connect to WiFi within timeout. Starting config portal.");
       resetWifiSettings();
     }
   } else {
-    // WiFi is connected, handle server requests
     server.handleClient();
   }
 
@@ -501,7 +469,6 @@ void loop() {
     lastPatternUpdate = currentMillis;
     currentState = (currentState + 1) % NUM_STATES;
     updatePatternState();
-    //Serial.printf("HI from active pattern %x %d %d\n", ledState, currentState, millis());
   }
 }
 
