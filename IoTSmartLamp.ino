@@ -207,7 +207,7 @@ void  updatePatternState() {
         case 3: ledState = 0xC003; break;
       }
       break;
-    case LEFT_TO_RIGHT:
+    case RIGHT_TO_LEFT:
       switch (currentState) {
         case 0: ledState = 0xC000; break;
         case 1: ledState = 0x2000; break;
@@ -218,7 +218,7 @@ void  updatePatternState() {
         case 6: ledState = 0x0003; break;
       }
       break;
-    case RIGHT_TO_LEFT:
+    case LEFT_TO_RIGHT:
       switch (currentState) {
         case 6: ledState = 0xC000; break;
         case 5: ledState = 0x2000; break;
@@ -283,20 +283,29 @@ void resetWifiSettings() {
 
 bool connectToSavedWiFi() {
   WiFi.mode(WIFI_STA);
+  String savedSSID = WiFi.SSID();
+  Serial.println(savedSSID);
+
+  if(savedSSID.length() == 0){
+    delay(1000);
+    return false;
+  }
+
   WiFi.begin();
- 
+
   unsigned long startAttemptTime = millis();
 
   while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_CONNECT_TIMEOUT) {
     delay(100);
     Serial.print(".");
   }
- 
+
   if (WiFi.status() == WL_CONNECTED) {
     return true;
   } else {
     return false;
   }
+
 }
 
 void handleRoot() {
