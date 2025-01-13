@@ -11,19 +11,24 @@
 // --------------------------- Variables <-> Master System  --------------------------- //
 
 // EEPROM settings
-#define EEPROM_SIZE 16
+#define EEPROM_SIZE 24
 #define EEPROM_ADDR_START 100
 #define EEPROM_ADDR_VALID (EEPROM_ADDR_START + 0)
 #define EEPROM_ADDR_LED_STATE (EEPROM_ADDR_START + 1)
 #define EEPROM_ADDR_PATTERN (EEPROM_ADDR_START + 5)
 #define EEPROM_ADDR_INTERVAL (EEPROM_ADDR_START + 9)
+#define EEPROM_ADDR_RESET (EEPROM_ADDR_START + 13)
+#define EEPROM_RESET_TIMEOUT 10000
 
 struct Settings {
   uint32_t ledState;
   int patternType;
   unsigned long patternInterval;
+  unsigned int savedPowerOnCounter;
 };
 
+unsigned long lastPowerOnTimestamp;
+unsigned int powerOnCounter;
 
 // --------------------------- Variables <-> Lighting System --------------------------- //
 
@@ -39,6 +44,7 @@ uint32_t ledState = 0;
 
 enum PatternType {
   NONE,
+  PAIR,
   OUT_TO_IN,
   IN_TO_OUT,
   LEFT_TO_RIGHT,
@@ -57,9 +63,9 @@ const uint32_t G6_MASK = 0x0004;
 const uint32_t G7_MASK = 0x0003;
 const uint32_t G8_MASK = 0xFFFF;
 
-int NUM_STATES = 4;
+int NUM_STATES = 7;
 int currentState = 0;
-PatternType activePattern = NONE;
+PatternType activePattern = PAIR;
 unsigned long lastPatternUpdate = 0;
 unsigned long patternUpdateInterval = 1000; 
 
@@ -86,6 +92,7 @@ void saveSettings() {
   settings.ledState = ledState;
   settings.patternType = static_cast<int>(activePattern);
   settings.patternInterval = patternUpdateInterval;
+  settings.savedPowerOnCounter = powerOnCounter;
 
   EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
   EEPROM.write(EEPROM_ADDR_VALID, 0xAA);
@@ -95,6 +102,7 @@ void saveSettings() {
 }
 
 void loadSettings() {
+
   EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
   
   if (EEPROM.read(EEPROM_ADDR_VALID) != 0xAA) {
@@ -112,6 +120,31 @@ void loadSettings() {
   ledState = settings.ledState;
   activePattern = static_cast<PatternType>(settings.patternType);
   patternUpdateInterval = settings.patternInterval;
+  if(settings.savedPowerOnCounter > 4) {
+    powerOnCounter = 1;
+  } else if(settings.savedPowerOnCounter >= 3) {
+    Serial.println("Resetting EEPROM");
+
+    // Reset EEPROM and WIFI Config
+    ledState = 0x0000;
+    setPattern(PAIR);
+    powerOnCounter = 0;
+
+    updatePatternState();
+    saveSettings();
+    resetWifiSettings();
+
+    ledState = 0x0000;
+    setPattern(LEFT_TO_RIGHT);
+    patternUpdateInterval = 1000;
+    updatePatternState();
+    saveSettings();
+  } else {
+    powerOnCounter = settings.savedPowerOnCounter;
+    powerOnCounter = powerOnCounter + 1;
+    saveSettings();
+  }
+
 
   switch (activePattern) {
     case OUT_TO_IN:
@@ -126,7 +159,7 @@ void loadSettings() {
       NUM_STATES = 1;
       break;
   }
-
+  updatePatternState();
   updateLEDs();
 }
 
@@ -191,6 +224,11 @@ void  updatePatternState() {
         case G7: ledState |= G7_MASK; break;
       }
       break;
+    case PAIR:
+      switch(currentState){
+        case 0: ledState = 0x0002;break;
+      }
+      break;
     case OUT_TO_IN:
       switch (currentState) {
         case 0: ledState = 0xC003; break;
@@ -230,6 +268,8 @@ void  updatePatternState() {
       }
       break;
     default:
+      ledState = 0x0000;
+      activePattern = NONE;
       break;
   }
   updateLEDs();
@@ -432,10 +472,10 @@ void handleLEDs() {
 void setup() {
   Serial.begin(115200);
  
-  loadSettings(); 
-  
   setupShiftRegisters();
 
+  loadSettings(); 
+  
   if (!bmp.begin()) {
     Serial.println("Could not find a valid BMP180 sensor, check wiring!");
   }
@@ -460,10 +500,19 @@ void setup() {
     Serial.println("Failed to connect and configure WiFi. Restarting...");
     ESP.restart();
   }
+
+  Serial.println(powerOnCounter);
+  lastPowerOnTimestamp = millis();
 }
 
 void loop() {
   unsigned long currentMillis = millis();
+
+ if ((powerOnCounter)&&(currentMillis - lastPowerOnTimestamp > EEPROM_RESET_TIMEOUT)) {
+    powerOnCounter = 0;
+    saveSettings();
+    Serial.println("Reset Power on counter set to 0 after timeout.");
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     if (currentMillis - wifiConnectStartTime >= WIFI_CONNECT_TIMEOUT) {
