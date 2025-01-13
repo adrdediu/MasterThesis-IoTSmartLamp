@@ -106,9 +106,17 @@ void loadSettings() {
   EEPROM.begin(EEPROM_SIZE + EEPROM_ADDR_START);
   
   if (EEPROM.read(EEPROM_ADDR_VALID) != 0xAA) {
-    ledState = 0;
-    activePattern = NONE;
+
+    // Reset EEPROM and WIFI Config
+    ledState = 0x0000;
     patternUpdateInterval = 1000;
+    NUM_STATES = 1;
+    setPattern(PAIR);
+    powerOnCounter = 0;
+    updatePatternState();
+    saveSettings();
+    resetWifiSettings();
+
     EEPROM.end();
     return;
   }
@@ -160,7 +168,6 @@ void loadSettings() {
       break;
   }
   updatePatternState();
-  updateLEDs();
 }
 
 // ---------------------------- Functions <-> Lighting System  --------------------------- //
